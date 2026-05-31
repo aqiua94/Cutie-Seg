@@ -59,6 +59,8 @@ def main():
     parser.add_argument('--grad-accum', type=int, default=8)
     parser.add_argument('--num-workers', type=int, default=8)
     parser.add_argument('--prefetch-factor', type=int, default=4)
+    parser.add_argument('--pin-memory', action='store_true')
+    parser.add_argument('--persistent-workers', action='store_true')
     parser.add_argument('--save-dir', type=Path, default=Path('output/creff_davis_creff_only_s480_l8_b4a8'))
     parser.add_argument('--save-every', type=int, default=100)
     parser.add_argument('--seed', type=int, default=14159265)
@@ -80,9 +82,9 @@ def main():
                         batch_size=args.batch_size,
                         shuffle=True,
                         num_workers=args.num_workers,
-                        pin_memory=True,
+                        pin_memory=args.pin_memory,
                         drop_last=True,
-                        persistent_workers=args.num_workers > 0,
+                        persistent_workers=args.persistent_workers and args.num_workers > 0,
                         prefetch_factor=args.prefetch_factor if args.num_workers > 0 else None,
                         worker_init_fn=worker_init_fn)
     print(f'Found {len(dataset)} trainable GOP-start clips.', flush=True)

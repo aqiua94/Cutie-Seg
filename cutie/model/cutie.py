@@ -7,6 +7,8 @@ import torch.nn as nn
 from cutie.model.modules import *
 from cutie.model.big_modules import *
 from cutie.model.aux_modules import AuxComputer
+from cutie.model.creff import CReFFBlock
+from cutie.model.mv_warp import warp_feature
 from cutie.model.utils.memory_utils import *
 from cutie.model.transformer.object_transformer import QueryTransformer
 from cutie.model.transformer.object_summarizer import ObjectSummarizer
@@ -28,12 +30,16 @@ class CUTIE(nn.Module):
         self.embed_dim = model_cfg.embed_dim
         self.single_object = single_object
         self.object_transformer_enabled = model_cfg.object_transformer.num_blocks > 0
+        self.use_creff = model_cfg.get('use_creff', cfg.get('use_creff', False))
+        self.creff_k = model_cfg.get('creff_k', cfg.get('creff_k', 7))
 
         log.info(f'Single object: {self.single_object}')
         log.info(f'Object transformer enabled: {self.object_transformer_enabled}')
 
         self.pixel_encoder = PixelEncoder(model_cfg)
         self.pix_feat_proj = nn.Conv2d(self.ms_dims[0], self.pixel_dim, kernel_size=1)
+        if self.use_creff:
+            self.creff = CReFFBlock(feat_dim=self.pixel_dim, kH=self.creff_k, kW=self.creff_k)
         self.key_proj = KeyProjection(model_cfg)
         self.mask_encoder = MaskEncoder(model_cfg, single_object=single_object)
         self.mask_decoder = MaskDecoder(model_cfg)
@@ -62,6 +68,19 @@ class CUTIE(nn.Module):
         image = (image - self.pixel_mean) / self.pixel_std
         ms_image_feat = self.pixel_encoder(image)
         return ms_image_feat, self.pix_feat_proj(ms_image_feat[0])
+
+    def encode_image_compressed(
+            self,
+            image_lr: torch.Tensor,
+            ref_pix_feat_hr: torch.Tensor = None,
+            mv: torch.Tensor = None) -> (Iterable[torch.Tensor], torch.Tensor):
+        ms_image_feat, pix_feat_lr = self.encode_image(image_lr)
+        if not self.use_creff or ref_pix_feat_hr is None or mv is None:
+            return ms_image_feat, pix_feat_lr
+
+        warped_ref = warp_feature(ref_pix_feat_hr, mv)
+        pix_feat = self.creff(warped_ref, pix_feat_lr)
+        return ms_image_feat, pix_feat
 
     def encode_mask(
             self,

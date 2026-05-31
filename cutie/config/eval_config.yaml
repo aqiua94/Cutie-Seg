@@ -15,6 +15,12 @@ weights: output/cutie-base-mega.pth
 output_dir: null # defaults to run_dir; specify this to override
 flip_aug: False
 
+# Optional AR-Seg style altering-resolution inference.
+use_creff: False
+gop_length: 12
+lr_scale: 0.5
+hr_pix_memory_keep: 2
+
 # maximum shortest side of the input; -1 means no resizing
 # With eval_vos.py, we usually just use the dataset's size (resizing done in dataloader)
 # this parameter is added for the sole purpose for the GUI in the current codebase

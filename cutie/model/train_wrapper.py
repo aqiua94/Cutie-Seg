@@ -2,10 +2,12 @@ import logging
 from omegaconf import DictConfig
 import numpy as np
 import torch
+import torch.nn.functional as F
 from typing import Dict
 
 from einops.layers.torch import Rearrange
 from cutie.model.cutie import CUTIE
+from cutie.model.mv_warp import warp_feature
 
 log = logging.getLogger()
 
@@ -21,6 +23,58 @@ class CutieTrainWrapper(CUTIE):
         self.use_amp = stage_cfg.amp
         self.move_t_out_of_batch = Rearrange('(b t) c h w -> b t c h w', t=self.seq_length)
         self.move_t_from_batch_to_volume = Rearrange('(b t) c h w -> b c t h w', t=self.seq_length)
+        self.lr_scale = stage_cfg.get('lr_scale', cfg.model.get('lr_scale', 0.5))
+        self.freeze_decoder_for_fst = stage_cfg.get('freeze_decoder_for_fst', False)
+        if self.use_creff and self.freeze_decoder_for_fst:
+            for param in self.parameters():
+                param.requires_grad = False
+            for param in self.creff.parameters():
+                param.requires_grad = True
+
+
+    def _encode_compressed_sequence(self, frames: torch.Tensor, mv_seq: torch.Tensor,
+                                    is_i_frame: torch.Tensor):
+        b, seq_length = frames.shape[:2]
+        ms_feat_all = []
+        pix_feat_all = []
+        feat_losses = []
+        ref_pix_feat_hr = None
+
+        for ti in range(seq_length):
+            is_i = bool(is_i_frame[:, ti].all().item())
+            if is_i or ref_pix_feat_hr is None:
+                ms_t, pix_t = self.encode_image(frames[:, ti])
+                ref_pix_feat_hr = pix_t.detach()
+            else:
+                with torch.no_grad():
+                    teacher_ms_t, teacher_pix_t = self.encode_image(frames[:, ti])
+
+                image_lr = F.interpolate(frames[:, ti],
+                                         scale_factor=self.lr_scale,
+                                         mode='bilinear',
+                                         align_corners=False)
+                warped_ref = warp_feature(ref_pix_feat_hr, mv_seq[:, ti])
+                ms_t, pix_lr = self.encode_image(image_lr)
+                pix_t = self.creff(warped_ref, pix_lr)
+                ms_t = [
+                    F.interpolate(feat,
+                                  size=teacher_feat.shape[-2:],
+                                  mode='bilinear',
+                                  align_corners=False)
+                    for feat, teacher_feat in zip(ms_t, teacher_ms_t)
+                ]
+                feat_losses.append(F.mse_loss(pix_t.float(), teacher_pix_t.float()))
+
+            ms_feat_all.append(ms_t)
+            pix_feat_all.append(pix_t)
+
+        ms_feat = [torch.stack([ms_t[level] for ms_t in ms_feat_all], dim=1) for level in range(len(ms_feat_all[0]))]
+        pix_feat = torch.stack(pix_feat_all, dim=1)
+        if feat_losses:
+            feat_distill_loss = torch.stack(feat_losses).mean()
+        else:
+            feat_distill_loss = frames.new_tensor(0.0)
+        return ms_feat, pix_feat, feat_distill_loss
 
     def forward(self, data: Dict):
         out = {}
@@ -39,19 +93,28 @@ class CutieTrainWrapper(CUTIE):
             return [f[:, ti] for f in ms_feat]
 
         with torch.cuda.amp.autocast(enabled=self.use_amp):
-            frames_flat = frames.view(b * seq_length, *frames.shape[2:])
-            ms_feat, pix_feat = self.encode_image(frames_flat)
-            with torch.cuda.amp.autocast(enabled=False):
-                keys, shrinkages, selections = self.transform_key(ms_feat[0].float())
+            use_compressed = self.use_creff and 'mv' in data and 'is_i_frame' in data
+            if use_compressed:
+                ms_feat, pix_feat, feat_distill_loss = self._encode_compressed_sequence(
+                    frames, data['mv'], data['is_i_frame'])
+                out['feat_distill_loss'] = feat_distill_loss
+                with torch.cuda.amp.autocast(enabled=False):
+                    keys, shrinkages, selections = self.transform_key(ms_feat[0].flatten(0, 1).float())
+            else:
+                frames_flat = frames.view(b * seq_length, *frames.shape[2:])
+                ms_feat, pix_feat = self.encode_image(frames_flat)
+                with torch.cuda.amp.autocast(enabled=False):
+                    keys, shrinkages, selections = self.transform_key(ms_feat[0].float())
 
-            # ms_feat: tuples of (B*T)*C*H*W -> B*T*C*H*W
+                # ms_feat: tuples of (B*T)*C*H*W -> B*T*C*H*W
+                ms_feat = [self.move_t_out_of_batch(f) for f in ms_feat]
+                pix_feat = self.move_t_out_of_batch(pix_feat)
+
             # keys/shrinkages/selections: (B*T)*C*H*W -> B*C*T*H*W
             h, w = keys.shape[-2:]
             keys = self.move_t_from_batch_to_volume(keys)
             shrinkages = self.move_t_from_batch_to_volume(shrinkages)
             selections = self.move_t_from_batch_to_volume(selections)
-            ms_feat = [self.move_t_out_of_batch(f) for f in ms_feat]
-            pix_feat = self.move_t_out_of_batch(pix_feat)
 
             # zero-init sensory
             sensory = torch.zeros((b, num_objects, self.sensory_dim, h, w), device=frames.device)

@@ -7,6 +7,12 @@ value_dim: 256
 sensory_dim: 256
 embed_dim: 256
 
+# AR-Seg / CReFF integration. Disabled by default.
+use_creff: False
+creff_k: 7
+lr_scale: 0.5
+feat_distill_weight: 1.0
+
 pixel_encoder:
   type: resnet50
   ms_dims: [1024, 512, 256]

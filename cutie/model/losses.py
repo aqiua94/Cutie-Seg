@@ -39,6 +39,7 @@ class LossComputer:
 
         self.sensory_weight = cfg.model.aux_loss.sensory.weight
         self.query_weight = cfg.model.aux_loss.query.weight
+        self.feat_distill_weight = stage_cfg.get('feat_distill_weight', cfg.model.get('feat_distill_weight', 1.0))
 
     def mask_loss(self, logits: torch.Tensor,
                   soft_gt: torch.Tensor) -> (torch.Tensor, torch.Tensor):
@@ -91,6 +92,9 @@ class LossComputer:
                     loss_ce, loss_dice = self.mask_loss(query_log, soft_gt)
                     losses[f'aux_query_ce_l{l}'] += loss_ce / batch_size * self.query_weight
                     losses[f'aux_query_dice_l{l}'] += loss_dice / batch_size * self.query_weight
+
+        if 'feat_distill_loss' in data:
+            losses['feat_distill'] = data['feat_distill_loss'] * self.feat_distill_weight
 
         losses['total_loss'] = sum(losses.values())
 

@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from cutie.inference.memory_manager import MemoryManager
 from cutie.inference.object_manager import ObjectManager
 from cutie.inference.image_feature_store import ImageFeatureStore
+from cutie.inference.hr_pixel_memory import HRPixelMemory
 from cutie.model.cutie import CUTIE
 from cutie.utils.tensor_utils import pad_divide_by, unpad, aggregate
 
@@ -30,6 +31,9 @@ class InferenceCore:
         self.save_aux = cfg.save_aux
         self.max_internal_size = cfg.max_internal_size
         self.flip_aug = cfg.flip_aug
+        self.use_creff = cfg.get('use_creff', getattr(network, 'use_creff', False)) and getattr(network, 'use_creff', False)
+        self.gop_length = cfg.get('gop_length', 12)
+        self.lr_scale = cfg.get('lr_scale', 0.5)
 
         self.curr_ti = -1
         self.last_mem_ti = 0
@@ -41,6 +45,7 @@ class InferenceCore:
                 np.round(np.linspace(1, self.mem_every, stagger_updates)).astype(int))
         self.object_manager = ObjectManager()
         self.memory = MemoryManager(cfg=cfg, object_manager=self.object_manager)
+        self.hr_pix_memory = HRPixelMemory(max_keep=cfg.get('hr_pix_memory_keep', 2)) if self.use_creff else None
 
         if image_feature_store is None:
             self.image_feature_store = ImageFeatureStore(self.network)
@@ -53,16 +58,22 @@ class InferenceCore:
         self.curr_ti = -1
         self.last_mem_ti = 0
         self.memory = MemoryManager(cfg=self.cfg, object_manager=self.object_manager)
+        if self.hr_pix_memory is not None:
+            self.hr_pix_memory.clear()
 
     def clear_non_permanent_memory(self):
         self.curr_ti = -1
         self.last_mem_ti = 0
         self.memory.clear_non_permanent_memory()
+        if self.hr_pix_memory is not None:
+            self.hr_pix_memory.clear()
 
     def clear_sensory_memory(self):
         self.curr_ti = -1
         self.last_mem_ti = 0
         self.memory.clear_sensory_memory()
+        if self.hr_pix_memory is not None:
+            self.hr_pix_memory.clear()
 
     def update_config(self, cfg):
         self.mem_every = cfg['mem_every']
@@ -177,7 +188,8 @@ class InferenceCore:
              idx_mask: bool = True,
              end: bool = False,
              delete_buffer: bool = True,
-             force_permanent: bool = False) -> torch.Tensor:
+             force_permanent: bool = False,
+             mv: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Take a step with a new incoming image.
         If there is an incoming mask with new objects, we will memorize them.
@@ -230,9 +242,26 @@ class InferenceCore:
         self.curr_ti += 1
 
         image, self.pad = pad_divide_by(image, 16)
+        if mv is not None:
+            mv = mv.to(device=image.device, dtype=image.dtype)
+            if mv.ndim != 3 or mv.shape[-1] != 2:
+                raise ValueError(f'mv must have shape [H, W, 2], got {tuple(mv.shape)}')
+            if resize_needed:
+                mv = mv.permute(2, 0, 1).unsqueeze(0)
+                mv[:, 0] *= new_w / w
+                mv[:, 1] *= new_h / h
+                mv = F.interpolate(mv, size=(new_h, new_w), mode='bilinear', align_corners=False)
+                mv = mv[0].permute(1, 2, 0)
+            mv = F.pad(mv.permute(2, 0, 1), self.pad).permute(1, 2, 0)
         image = image.unsqueeze(0)  # add the batch dimension
         if self.flip_aug:
             image = torch.cat([image, torch.flip(image, dims=[-1])], dim=0)
+            if mv is not None:
+                flipped_mv = torch.flip(mv, dims=[1]).clone()
+                flipped_mv[..., 0] = -flipped_mv[..., 0]
+                mv = torch.stack([mv, flipped_mv], dim=0)
+        elif mv is not None:
+            mv = mv.unsqueeze(0)
 
         # whether to update the working memory
         is_mem_frame = ((self.curr_ti - self.last_mem_ti >= self.mem_every) or
@@ -243,8 +272,28 @@ class InferenceCore:
         update_sensory = ((self.curr_ti - self.last_mem_ti) in self.stagger_ti) and (not end)
 
         # encoding the image
-        ms_feat, pix_feat = self.image_feature_store.get_features(self.curr_ti, image)
-        key, shrinkage, selection = self.image_feature_store.get_key(self.curr_ti, image)
+        ref_pix_feat = self.hr_pix_memory.get_latest() if self.hr_pix_memory is not None else None
+        is_i_frame = (mask is not None) or (self.curr_ti % self.gop_length == 0) or ref_pix_feat is None
+        use_compressed_frame = self.use_creff and (not is_i_frame) and mv is not None
+        if use_compressed_frame:
+            image_lr = F.interpolate(image,
+                                     scale_factor=self.lr_scale,
+                                     mode='bilinear',
+                                     align_corners=False)
+            ms_feat, pix_feat = self.network.encode_image_compressed(image_lr, ref_pix_feat, mv)
+            target_sizes = [(image.shape[-2] // 16, image.shape[-1] // 16),
+                            (image.shape[-2] // 8, image.shape[-1] // 8),
+                            (image.shape[-2] // 4, image.shape[-1] // 4)]
+            ms_feat = [
+                F.interpolate(feat, size=size, mode='bilinear', align_corners=False)
+                for feat, size in zip(ms_feat, target_sizes)
+            ]
+            key, shrinkage, selection = self.network.transform_key(ms_feat[0])
+        else:
+            ms_feat, pix_feat = self.image_feature_store.get_features(self.curr_ti, image)
+            key, shrinkage, selection = self.image_feature_store.get_key(self.curr_ti, image)
+            if self.hr_pix_memory is not None and is_i_frame:
+                self.hr_pix_memory.add(self.curr_ti // self.gop_length, self.curr_ti, pix_feat)
 
         # segmentation from memory if needed
         if need_segment:

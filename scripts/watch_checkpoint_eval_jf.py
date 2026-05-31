@@ -87,6 +87,10 @@ def main() -> None:
     parser.add_argument('--poll-seconds', type=int, default=60)
     parser.add_argument('--timeout-seconds', type=int, default=24 * 3600)
     parser.add_argument('--amp', action='store_true')
+    parser.add_argument('--train-batch-size', type=int, default=4)
+    parser.add_argument('--train-grad-accum', type=int, default=8)
+    parser.add_argument('--train-seq-length', type=int, default=8)
+    parser.add_argument('--train-size-desc', default='480x480_square_crop')
     args = parser.parse_args()
 
     start = time.time()
@@ -131,10 +135,12 @@ def main() -> None:
 
     global_row = read_global(metrics_file)
     now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    eff_bs = args.train_batch_size * args.train_grad_accum
     train_params = (
-        'train_size=480x480_square_crop; batch_size=4; grad_accum=8; eff_bs=32; '
-        'seq_length=8; trainable=CReFF only; frozen encoder/decoder; compressed DAVIS; '
-        'GOP12; lr_creff=1e-4; no AMP'
+        f'train_size={args.train_size_desc}; batch_size={args.train_batch_size}; '
+        f'grad_accum={args.train_grad_accum}; eff_bs={eff_bs}; '
+        f'seq_length={args.train_seq_length}; trainable=CReFF only; '
+        'frozen encoder/decoder; compressed DAVIS; GOP12; lr_creff=1e-4; no AMP'
     )
     eval_params = (
         f'compressed_root=data/DAVIS/2017/trainval/compressed/3M-GOP12; '

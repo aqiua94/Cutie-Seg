@@ -32,6 +32,7 @@ class InferenceCore:
         self.max_internal_size = cfg.max_internal_size
         self.flip_aug = cfg.flip_aug
         self.use_creff = cfg.get('use_creff', getattr(network, 'use_creff', False)) and getattr(network, 'use_creff', False)
+        self.compressed_p_frames = cfg.get('compressed_p_frames', self.use_creff)
         self.gop_length = cfg.get('gop_length', 12)
         self.lr_scale = cfg.get('lr_scale', 0.5)
 
@@ -273,8 +274,10 @@ class InferenceCore:
 
         # encoding the image
         ref_pix_feat = self.hr_pix_memory.get_latest() if self.hr_pix_memory is not None else None
-        is_i_frame = (mask is not None) or (self.curr_ti % self.gop_length == 0) or ref_pix_feat is None
-        use_compressed_frame = self.use_creff and (not is_i_frame) and mv is not None
+        is_i_frame = (mask is not None) or (self.curr_ti % self.gop_length == 0)
+        if self.use_creff and ref_pix_feat is None:
+            is_i_frame = True
+        use_compressed_frame = self.compressed_p_frames and (not is_i_frame) and mv is not None
         if use_compressed_frame:
             image_lr = F.interpolate(image,
                                      scale_factor=self.lr_scale,
@@ -288,6 +291,11 @@ class InferenceCore:
                 F.interpolate(feat, size=size, mode='bilinear', align_corners=False)
                 for feat, size in zip(ms_feat, target_sizes)
             ]
+            if pix_feat.shape[-2:] != target_sizes[0]:
+                pix_feat = F.interpolate(pix_feat,
+                                         size=target_sizes[0],
+                                         mode='bilinear',
+                                         align_corners=False)
             key, shrinkage, selection = self.network.transform_key(ms_feat[0])
         else:
             ms_feat, pix_feat = self.image_feature_store.get_features(self.curr_ti, image)

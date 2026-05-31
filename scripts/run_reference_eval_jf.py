@@ -78,6 +78,8 @@ def main() -> None:
     parser.add_argument('--size', type=int, default=480)
     parser.add_argument('--workers', type=int, default=12)
     parser.add_argument('--amp', action='store_true')
+    parser.add_argument('--compressed-p-frames', action='store_true',
+                        help='Use LR P-frame encoding while keeping CReFF disabled.')
     parser.add_argument('--ledger-csv', type=Path, default=Path('output/validation_ledger.csv'))
     parser.add_argument('--ledger-md', type=Path, default=Path('output/validation_ledger.md'))
     args = parser.parse_args()
@@ -97,6 +99,8 @@ def main() -> None:
     ]
     if args.amp:
         eval_cmd.append('--amp')
+    if args.compressed_p_frames:
+        eval_cmd.append('--compressed-p-frames')
     run(eval_cmd)
 
     metrics_file = args.output_dir / f'jf_metrics_{args.size}_parallel.csv'
@@ -118,7 +122,9 @@ def main() -> None:
     now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
     eval_params = (
         f'compressed_root=data/DAVIS/2017/trainval/compressed/3M-GOP12; '
-        f'gop_length={args.gop_length}; disable_creff; size={args.size}; '
+        f'gop_length={args.gop_length}; disable_creff; '
+        f'{"compressed_p_frames; " if args.compressed_p_frames else ""}'
+        f'size={args.size}; '
         f'{"amp; " if args.amp else ""}skip_first; eval_size={args.size}; '
         f'jf_workers={args.workers}'
     )
@@ -138,13 +144,17 @@ def main() -> None:
         'frames': metrics['frames'],
         'pred_dir': str(args.output_dir / 'Annotations'),
         'metrics_file': str(metrics_file),
-        'notes': 'reference run on HEVC decoded frames with CReFF disabled',
+        'notes': ('true lower bound: LR P-frame encode without CReFF injection'
+                  if args.compressed_p_frames else
+                  'reference run on HEVC decoded frames with CReFF disabled'),
     }
     append_csv(args.ledger_csv, row)
     append_md(
         args.ledger_md,
         row,
-        f'GOP{args.gop_length}, no-CReFF, size {args.size}, '
+        f'GOP{args.gop_length}, no-CReFF, '
+        f'{"LR P-frames, " if args.compressed_p_frames else ""}'
+        f'size {args.size}, '
         f'{"AMP, " if args.amp else ""}skip first, eval-size {args.size}, J&F workers {args.workers}',
     )
     print(f'{args.method}: J={row["J"]} F={row["F"]} J&F={row["J_and_F"]}', flush=True)

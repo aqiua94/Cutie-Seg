@@ -13,5 +13,15 @@
         "**/.git/objects/**": true,
         "**/.git/subtree-cache/**": true,
         "**/node_modules/*/**": true
+    },
+    "chat.tools.terminal.autoApprove": {
+        "/^git push -u origin \\$\\(git rev-parse --abbrev-ref HEAD\\)$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^git add -A && if git diff --cached --quiet; then echo \"NO_COMMIT_REQUIRED\"; else git commit -m \"Update code\"; fi && git push -u origin \\$\\(git rev-parse --abbrev-ref HEAD\\)$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
     }
 }

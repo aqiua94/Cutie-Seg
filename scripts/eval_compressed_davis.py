@@ -89,6 +89,8 @@ def main():
     parser.add_argument('--max-videos', type=int, default=-1)
     parser.add_argument('--amp', action='store_true')
     parser.add_argument('--disable-creff', action='store_true')
+    parser.add_argument('--compressed-p-frames', action='store_true',
+                        help='Encode non-I GOP frames at LR without requiring CReFF injection.')
     parser.add_argument('--gop-length', type=int, default=12)
     parser.add_argument('--lr-scale', type=float, default=0.5)
     args = parser.parse_args()
@@ -97,6 +99,7 @@ def main():
     cfg.model = OmegaConf.load('cutie/config/model/base.yaml')
     cfg.model.use_creff = not args.disable_creff
     cfg.use_creff = not args.disable_creff
+    cfg.compressed_p_frames = args.compressed_p_frames or cfg.use_creff
     cfg.gop_length = args.gop_length
     cfg.lr_scale = args.lr_scale
     cfg.hr_pix_memory_keep = 2

@@ -65,6 +65,14 @@ def main():
     parser.add_argument('--save-every', type=int, default=100)
     parser.add_argument('--seed', type=int, default=14159265)
     parser.add_argument('--amp', action='store_true')
+    parser.add_argument('--creff-k', type=int, default=7)
+    parser.add_argument('--trainable-mode',
+                        choices=['creff_only', 'encoder_layer23_task_fst'],
+                        default='creff_only')
+    parser.add_argument('--feat-distill-type',
+                        choices=['mse_creff_to_hr', 'cosine_lr_to_hr', 'cosine_creff_to_hr'],
+                        default='mse_creff_to_hr')
+    parser.add_argument('--feat-distill-weight', type=float, default=1.0)
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
@@ -99,16 +107,18 @@ def main():
           f'grad_accum={args.grad_accum}',
           f'effective_batch_size={effective_batch_size}',
           f'lr={train_lr}',
+          f'creff_k={args.creff_k}',
           flush=True)
 
     model_cfg = OmegaConf.load('cutie/config/model/base.yaml')
     cfg = OmegaConf.create({
         'model': model_cfg,
         'use_creff': True,
-        'creff_k': 7,
+        'creff_k': args.creff_k,
         'debug': True,
     })
     cfg.model.use_creff = True
+    cfg.model.creff_k = args.creff_k
 
     stage_cfg = OmegaConf.create({
         'name': 'compressed_dataloader',
@@ -119,7 +129,9 @@ def main():
         'amp': args.amp,
         'lr_scale': 0.5,
         'freeze_decoder_for_fst': True,
-        'feat_distill_weight': 1.0,
+        'trainable_mode': args.trainable_mode,
+        'feat_distill_type': args.feat_distill_type,
+        'feat_distill_weight': args.feat_distill_weight,
         'point_supervision': True,
         'train_num_points': 2048,
         'oversample_ratio': 3.0,
@@ -179,6 +191,8 @@ def main():
               'effective_batch_size', effective_batch_size,
               'clip', first_name,
               'total_loss', accum_losses.get('total_loss', 0.0),
+              'loss_ce', accum_losses.get('loss_ce', 0.0),
+              'loss_dice', accum_losses.get('loss_dice', 0.0),
               'feat_distill', accum_losses.get('feat_distill', 0.0),
               'grad_norm', float(grad_norm.detach().cpu()), flush=True)
 

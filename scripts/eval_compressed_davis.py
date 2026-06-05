@@ -93,12 +93,15 @@ def main():
                         help='Encode non-I GOP frames at LR without requiring CReFF injection.')
     parser.add_argument('--gop-length', type=int, default=12)
     parser.add_argument('--lr-scale', type=float, default=0.5)
+    parser.add_argument('--creff-k', type=int, default=7)
     args = parser.parse_args()
 
     cfg = OmegaConf.load('cutie/config/eval_config.yaml')
     cfg.model = OmegaConf.load('cutie/config/model/base.yaml')
     cfg.model.use_creff = not args.disable_creff
+    cfg.model.creff_k = args.creff_k
     cfg.use_creff = not args.disable_creff
+    cfg.creff_k = args.creff_k
     cfg.compressed_p_frames = args.compressed_p_frames or cfg.use_creff
     cfg.gop_length = args.gop_length
     cfg.lr_scale = args.lr_scale

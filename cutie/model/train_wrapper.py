@@ -25,11 +25,31 @@ class CutieTrainWrapper(CUTIE):
         self.move_t_from_batch_to_volume = Rearrange('(b t) c h w -> b c t h w', t=self.seq_length)
         self.lr_scale = stage_cfg.get('lr_scale', cfg.model.get('lr_scale', 0.5))
         self.freeze_decoder_for_fst = stage_cfg.get('freeze_decoder_for_fst', False)
+        self.trainable_mode = stage_cfg.get('trainable_mode', 'creff_only')
+        self.feat_distill_type = stage_cfg.get('feat_distill_type', 'mse_creff_to_hr')
         if self.use_creff and self.freeze_decoder_for_fst:
             for param in self.parameters():
                 param.requires_grad = False
-            for param in self.creff.parameters():
-                param.requires_grad = True
+            if self.trainable_mode == 'creff_only':
+                for param in self.creff.parameters():
+                    param.requires_grad = True
+            elif self.trainable_mode == 'encoder_layer23_task_fst':
+                for name, param in self.named_parameters():
+                    if name.startswith(('pixel_encoder.layer2.', 'pixel_encoder.layer3.')):
+                        param.requires_grad = True
+            else:
+                raise ValueError(f'Unknown trainable_mode: {self.trainable_mode}')
+
+    @staticmethod
+    def _cosine_feature_loss(student: torch.Tensor, teacher: torch.Tensor) -> torch.Tensor:
+        if student.shape[-2:] != teacher.shape[-2:]:
+            student = F.interpolate(student,
+                                    size=teacher.shape[-2:],
+                                    mode='bilinear',
+                                    align_corners=False)
+        student = F.normalize(student.float(), dim=1)
+        teacher = F.normalize(teacher.float(), dim=1)
+        return 1.0 - (student * teacher).sum(dim=1).mean()
 
 
     def _encode_compressed_sequence(self, frames: torch.Tensor, mv_seq: torch.Tensor,
@@ -63,7 +83,14 @@ class CutieTrainWrapper(CUTIE):
                                   align_corners=False)
                     for feat, teacher_feat in zip(ms_t, teacher_ms_t)
                 ]
-                feat_losses.append(F.mse_loss(pix_t.float(), teacher_pix_t.float()))
+                if self.feat_distill_type == 'mse_creff_to_hr':
+                    feat_losses.append(F.mse_loss(pix_t.float(), teacher_pix_t.float()))
+                elif self.feat_distill_type == 'cosine_lr_to_hr':
+                    feat_losses.append(self._cosine_feature_loss(pix_lr, teacher_pix_t))
+                elif self.feat_distill_type == 'cosine_creff_to_hr':
+                    feat_losses.append(self._cosine_feature_loss(pix_t, teacher_pix_t))
+                else:
+                    raise ValueError(f'Unknown feat_distill_type: {self.feat_distill_type}')
 
             ms_feat_all.append(ms_t)
             pix_feat_all.append(pix_t)

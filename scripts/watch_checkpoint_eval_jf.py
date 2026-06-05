@@ -78,11 +78,13 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument('--checkpoint', type=Path, required=True)
     parser.add_argument('--step', type=int, required=True)
+    parser.add_argument('--method', default='CReFF-only')
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--ledger-csv', type=Path, default=Path('output/validation_ledger.csv'))
     parser.add_argument('--ledger-md', type=Path, default=Path('output/validation_ledger.md'))
     parser.add_argument('--size', type=int, default=480)
     parser.add_argument('--gop-length', type=int, default=12)
+    parser.add_argument('--creff-k', type=int, default=7)
     parser.add_argument('--workers', type=int, default=12)
     parser.add_argument('--poll-seconds', type=int, default=60)
     parser.add_argument('--timeout-seconds', type=int, default=24 * 3600)
@@ -91,6 +93,9 @@ def main() -> None:
     parser.add_argument('--train-grad-accum', type=int, default=8)
     parser.add_argument('--train-seq-length', type=int, default=8)
     parser.add_argument('--train-size-desc', default='480x480_square_crop')
+    parser.add_argument('--trainable-desc', default='CReFF only')
+    parser.add_argument('--frozen-desc', default='frozen encoder/decoder')
+    parser.add_argument('--notes', default='auto-evaluated after 480/seq8 CReFF-only training checkpoint')
     args = parser.parse_args()
 
     start = time.time()
@@ -113,6 +118,8 @@ def main() -> None:
         str(args.size),
         '--gop-length',
         str(args.gop_length),
+        '--creff-k',
+        str(args.creff_k),
     ]
     if args.amp:
         eval_cmd.append('--amp')
@@ -139,18 +146,18 @@ def main() -> None:
     train_params = (
         f'train_size={args.train_size_desc}; batch_size={args.train_batch_size}; '
         f'grad_accum={args.train_grad_accum}; eff_bs={eff_bs}; '
-        f'seq_length={args.train_seq_length}; trainable=CReFF only; '
-        'frozen encoder/decoder; compressed DAVIS; GOP12; lr_creff=1e-4; no AMP'
+        f'seq_length={args.train_seq_length}; creff_k={args.creff_k}; trainable={args.trainable_desc}; '
+        f'{args.frozen_desc}; compressed DAVIS; GOP12; lr_creff=1e-4; no AMP'
     )
     eval_params = (
         f'compressed_root=data/DAVIS/2017/trainval/compressed/3M-GOP12; '
-        f'gop_length={args.gop_length}; size={args.size}; '
+        f'gop_length={args.gop_length}; creff_k={args.creff_k}; size={args.size}; '
         f'{"amp; " if args.amp else ""}skip_first; eval_size={args.size}; '
         f'jf_workers={args.workers}'
     )
     row = {
         'validation_time_utc': now,
-        'method': 'CReFF-only',
+        'method': args.method,
         'checkpoint': str(args.checkpoint),
         'train_step': str(args.step),
         'train_params': train_params,
@@ -164,13 +171,13 @@ def main() -> None:
         'frames': global_row['frames'],
         'pred_dir': str(args.output_dir / 'Annotations'),
         'metrics_file': str(metrics_file),
-        'notes': 'auto-evaluated after 480/seq8 CReFF-only training checkpoint',
+        'notes': args.notes,
     }
     append_csv(args.ledger_csv, row)
     append_md(
         args.ledger_md,
         row,
-        f'train 480 crop, seq8, GOP12, size {args.size}, '
+        f'train 480 crop, seq8, GOP12, k{args.creff_k}, size {args.size}, '
         f'{"AMP, " if args.amp else ""}skip first, eval-size {args.size}, J&F workers {args.workers}',
     )
     print(f'appended validation ledger: J={row["J"]} F={row["F"]} J&F={row["J_and_F"]}', flush=True)

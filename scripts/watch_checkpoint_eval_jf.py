@@ -89,6 +89,10 @@ def main() -> None:
     parser.add_argument('--poll-seconds', type=int, default=60)
     parser.add_argument('--timeout-seconds', type=int, default=24 * 3600)
     parser.add_argument('--amp', action='store_true')
+    parser.add_argument('--disable-creff', action='store_true')
+    parser.add_argument('--compressed-p-frames', action='store_true')
+    parser.add_argument('--lr-scale', type=float, default=0.5)
+    parser.add_argument('--train-lr-desc', default='lr_creff=1e-4')
     parser.add_argument('--train-batch-size', type=int, default=4)
     parser.add_argument('--train-grad-accum', type=int, default=8)
     parser.add_argument('--train-seq-length', type=int, default=8)
@@ -123,6 +127,11 @@ def main() -> None:
     ]
     if args.amp:
         eval_cmd.append('--amp')
+    if args.disable_creff:
+        eval_cmd.append('--disable-creff')
+    if args.compressed_p_frames:
+        eval_cmd.append('--compressed-p-frames')
+    eval_cmd.extend(['--lr-scale', str(args.lr_scale)])
     run(eval_cmd)
 
     metrics_file = args.output_dir / f'jf_metrics_{args.size}_parallel.csv'
@@ -147,11 +156,14 @@ def main() -> None:
         f'train_size={args.train_size_desc}; batch_size={args.train_batch_size}; '
         f'grad_accum={args.train_grad_accum}; eff_bs={eff_bs}; '
         f'seq_length={args.train_seq_length}; creff_k={args.creff_k}; trainable={args.trainable_desc}; '
-        f'{args.frozen_desc}; compressed DAVIS; GOP12; lr_creff=1e-4; no AMP'
+        f'{args.frozen_desc}; compressed DAVIS; GOP12; {args.train_lr_desc}; no AMP'
     )
     eval_params = (
         f'compressed_root=data/DAVIS/2017/trainval/compressed/3M-GOP12; '
         f'gop_length={args.gop_length}; creff_k={args.creff_k}; size={args.size}; '
+        f'{"disable_creff; " if args.disable_creff else ""}'
+        f'{"compressed_p_frames; " if args.compressed_p_frames else ""}'
+        f'lr_scale={args.lr_scale}; '
         f'{"amp; " if args.amp else ""}skip_first; eval_size={args.size}; '
         f'jf_workers={args.workers}'
     )

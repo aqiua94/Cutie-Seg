@@ -189,7 +189,7 @@ def main() -> None:
     append_md(
         args.ledger_md,
         row,
-        f'train 480 crop, seq8, GOP12, k{args.creff_k}, size {args.size}, '
+        f'train {args.train_size_desc}, seq{args.train_seq_length}, GOP12, k{args.creff_k}, size {args.size}, '
         f'{"AMP, " if args.amp else ""}skip first, eval-size {args.size}, J&F workers {args.workers}',
     )
     print(f'appended validation ledger: J={row["J"]} F={row["F"]} J&F={row["J_and_F"]}', flush=True)

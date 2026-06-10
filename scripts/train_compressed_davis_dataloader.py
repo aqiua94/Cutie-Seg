@@ -141,7 +141,29 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = CutieTrainWrapper(cfg, stage_cfg).to(device).train()
     weights = torch.load(args.weights, map_location='cpu')
+    source_keys = set(weights)
+    missing_creff_keys = sorted(
+        name for name in model.state_dict() if name.startswith('creff.') and name not in source_keys)
+    creff_before_load = {
+        name: param.detach().cpu().clone()
+        for name, param in model.named_parameters()
+        if name.startswith('creff.')
+    }
     model.load_weights(weights)
+    creff_unchanged = all(
+        torch.equal(param.detach().cpu(), creff_before_load[name])
+        for name, param in model.named_parameters()
+        if name.startswith('creff.'))
+    first_creff_name, first_creff_param = next(
+        (name, param) for name, param in model.named_parameters() if name.startswith('creff.'))
+    print('CReFF load audit:',
+          f'source={args.weights}',
+          f'missing_creff_keys={len(missing_creff_keys)}',
+          f'creff_unchanged_after_load={creff_unchanged}',
+          f'first_param={first_creff_name}',
+          f'mean={first_creff_param.detach().float().mean().item():.8f}',
+          f'std={first_creff_param.detach().float().std().item():.8f}',
+          flush=True)
     if args.resume is not None:
         model.load_state_dict(torch.load(args.resume, map_location='cpu'))
         print(f'Resumed model state from {args.resume} at start_step={args.start_step}.', flush=True)

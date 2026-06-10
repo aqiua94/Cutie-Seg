@@ -178,12 +178,12 @@ def main():
 
         if step == args.start_step:
             layer3_grad = model.pixel_encoder.layer3[-1].conv1.weight.grad
-            layer1_grad = model.pixel_encoder.res2[-1].conv1.weight.grad
-            decoder_grad = next(model.mask_decoder.parameters()).grad
+            res2_grad = model.pixel_encoder.res2[-1].conv1.weight.grad
+            decoder_grad_count = sum(1 for p in model.mask_decoder.parameters() if p.grad is not None)
             print('Freeze sanity:',
-                  f'layer3_grad={layer3_grad is not None}',
-                  f'layer1_grad={layer1_grad is not None}',
-                  f'mask_decoder_grad={decoder_grad is not None}', flush=True)
+                  f'layer3_grad_is_not_none={layer3_grad is not None}',
+                  f'res2_grad_is_not_none={res2_grad is not None}',
+                  f'mask_decoder_grad_count={decoder_grad_count}', flush=True)
 
         scaler.unscale_(optimizer)
         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 3.0)

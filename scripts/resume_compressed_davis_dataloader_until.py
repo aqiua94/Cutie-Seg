@@ -37,6 +37,7 @@ def main() -> None:
     parser.add_argument('--prefetch-factor', type=int, default=1)
     parser.add_argument('--lr', type=float, default=1e-5)
     parser.add_argument('--save-every', type=int, default=100)
+    parser.add_argument('--seed', type=int, default=14159265)
     parser.add_argument('--creff-k', type=int, default=7)
     parser.add_argument('--trainable-mode', default='creff_only')
     parser.add_argument('--feat-distill-type', default='mse_creff_to_hr')
@@ -67,6 +68,7 @@ def main() -> None:
             '--no-scale-lr',
             '--save-dir', str(args.save_dir),
             '--save-every', str(args.save_every),
+            '--seed', str(args.seed),
             '--creff-k', str(args.creff_k),
             '--trainable-mode', args.trainable_mode,
             '--feat-distill-type', args.feat_distill_type,

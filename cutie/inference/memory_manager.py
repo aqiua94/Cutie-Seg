@@ -2,6 +2,7 @@ import logging
 from omegaconf import DictConfig
 from typing import List, Dict
 import torch
+import torch.nn.functional as F
 
 from cutie.inference.object_manager import ObjectManager
 from cutie.inference.kv_memory_store import KeyValueMemoryStore
@@ -364,6 +365,11 @@ class MemoryManager:
                 bs, _, h, w = sample_key.shape
                 self.sensory[obj] = torch.zeros((bs, self.sensory_dim, h, w),
                                                 device=sample_key.device)
+
+    def resize_sensory(self, size) -> None:
+        for obj, sensory in self.sensory.items():
+            if sensory.shape[-2:] != tuple(size):
+                self.sensory[obj] = F.interpolate(sensory, size=size, mode='bilinear', align_corners=False)
 
     def update_sensory(self, sensory: torch.Tensor, ids: List[int]):
         # sensory: 1*num_objects*C*H*W

@@ -35,6 +35,7 @@ class InferenceCore:
         self.compressed_p_frames = cfg.get('compressed_p_frames', self.use_creff)
         self.gop_length = cfg.get('gop_length', 12)
         self.lr_scale = cfg.get('lr_scale', 0.5)
+        self.lr_downstream = cfg.get('lr_downstream', False)
 
         self.curr_ti = -1
         self.last_mem_ti = 0
@@ -278,30 +279,49 @@ class InferenceCore:
         if self.use_creff and ref_pix_feat is None:
             is_i_frame = True
         use_compressed_frame = self.compressed_p_frames and (not is_i_frame) and mv is not None
+        memory_image = image
         if use_compressed_frame:
             image_lr = F.interpolate(image,
                                      scale_factor=self.lr_scale,
                                      mode='bilinear',
                                      align_corners=False)
             ms_feat, pix_feat = self.network.encode_image_compressed(image_lr, ref_pix_feat, mv)
+            if self.lr_downstream:
+                memory_image = image_lr
             target_sizes = [(image.shape[-2] // 16, image.shape[-1] // 16),
                             (image.shape[-2] // 8, image.shape[-1] // 8),
                             (image.shape[-2] // 4, image.shape[-1] // 4)]
-            ms_feat = [
-                F.interpolate(feat, size=size, mode='bilinear', align_corners=False)
-                for feat, size in zip(ms_feat, target_sizes)
-            ]
-            if pix_feat.shape[-2:] != target_sizes[0]:
-                pix_feat = F.interpolate(pix_feat,
-                                         size=target_sizes[0],
-                                         mode='bilinear',
-                                         align_corners=False)
+            if self.lr_downstream:
+                lr_h, lr_w = pix_feat.shape[-2:]
+                lr_target_sizes = [(lr_h, lr_w), (lr_h * 2, lr_w * 2), (lr_h * 4, lr_w * 4)]
+                ms_feat = [
+                    feat if feat.shape[-2:] == size else F.interpolate(
+                        feat, size=size, mode='bilinear', align_corners=False)
+                    for feat, size in zip(ms_feat, lr_target_sizes)
+                ]
+            else:
+                ms_feat = [
+                    F.interpolate(feat, size=size, mode='bilinear', align_corners=False)
+                    for feat, size in zip(ms_feat, target_sizes)
+                ]
+                if pix_feat.shape[-2:] != target_sizes[0]:
+                    pix_feat = F.interpolate(pix_feat,
+                                             size=target_sizes[0],
+                                             mode='bilinear',
+                                             align_corners=False)
             key, shrinkage, selection = self.network.transform_key(ms_feat[0])
+            if self.lr_downstream:
+                memory_size = (key.shape[-2] * 16, key.shape[-1] * 16)
+                if memory_image.shape[-2:] != memory_size:
+                    memory_image = F.interpolate(memory_image, size=memory_size, mode='bilinear', align_corners=False)
         else:
             ms_feat, pix_feat = self.image_feature_store.get_features(self.curr_ti, image)
             key, shrinkage, selection = self.image_feature_store.get_key(self.curr_ti, image)
             if self.hr_pix_memory is not None and is_i_frame:
                 self.hr_pix_memory.add(self.curr_ti // self.gop_length, self.curr_ti, pix_feat)
+
+        if self.lr_downstream:
+            self.memory.resize_sensory(key.shape[-2:])
 
         # segmentation from memory if needed
         if need_segment:
@@ -363,7 +383,7 @@ class InferenceCore:
 
         # save as memory if needed
         if is_mem_frame or force_permanent:
-            self._add_memory(image,
+            self._add_memory(memory_image,
                              pix_feat,
                              self.last_mask,
                              key,
@@ -374,7 +394,10 @@ class InferenceCore:
         if delete_buffer:
             self.image_feature_store.delete(self.curr_ti)
 
-        output_prob = unpad(pred_prob_with_bg, self.pad)
+        output_prob = pred_prob_with_bg
+        if self.lr_downstream and output_prob.shape[-2:] != image.shape[-2:]:
+            output_prob = F.interpolate(output_prob.unsqueeze(0), size=image.shape[-2:], mode='bilinear', align_corners=False)[0]
+        output_prob = unpad(output_prob, self.pad)
         if resize_needed:
             # restore output to the original size
             output_prob = F.interpolate(output_prob.unsqueeze(0),

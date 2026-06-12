@@ -32,6 +32,7 @@ class CUTIE(nn.Module):
         self.object_transformer_enabled = model_cfg.object_transformer.num_blocks > 0
         self.use_creff = model_cfg.get('use_creff', cfg.get('use_creff', False))
         self.creff_k = model_cfg.get('creff_k', cfg.get('creff_k', 7))
+        self.lr_downstream = cfg.get('lr_downstream', False)
 
         log.info(f'Single object: {self.single_object}')
         log.info(f'Object transformer enabled: {self.object_transformer_enabled}')
@@ -79,6 +80,8 @@ class CUTIE(nn.Module):
             return ms_image_feat, pix_feat_lr
 
         warped_ref = warp_feature(ref_pix_feat_hr, mv)
+        if self.lr_downstream and warped_ref.shape[-2:] != pix_feat_lr.shape[-2:]:
+            warped_ref = F.interpolate(warped_ref, size=pix_feat_lr.shape[-2:], mode='bilinear', align_corners=False)
         pix_feat = self.creff(warped_ref, pix_feat_lr)
         return ms_image_feat, pix_feat
 

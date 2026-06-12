@@ -84,7 +84,8 @@ Preflight and anchors:
 
 - Native compressed-frame minimum short side: 720, so size480 never upsamples the source.
 - A0 official HR upper: J&F 0.8630, from output/baseline_official_no_creff_gop1_fullval.
-- A1 official true LR lower: J&F 0.6486, from output/baseline_official_no_creff_gop12_lr_pframes_fullval.
+- A1 official true LR lower: J&F 0.6486, from output/baseline_official_no_creff_gop12_lr_pframes_fullval. Its precise deployment geometry is HR480/LR240: `--size 480` establishes the I-frame/HR canvas, while `--compressed-p-frames --lr-scale 0.5` downsamples non-I frames to 240 inside `InferenceCore` before encoding. There is no separate official A1@240 true-lower run with J&F 0.6486.
+- The independent all-240 no-CReFF baseline encodes every frame at short-side 240 and reaches J&F 0.8266; it is not the true-lower deployment path.
 - 70% gap-recovery success line: J&F 0.7987.
 - Stage1 s480 smoke passed at b2a16/eff_bs32: layer3 grad present, res2 and mask decoder frozen, feat_distill=0, step0 total loss 1.6297. The earlier proposed 0.4-0.6 loss sanity range does not match this repository loss composition.
 
@@ -100,6 +101,30 @@ All training uses seed 14159265, seq8, GOP12, k7, no AMP, b2a16/eff_bs32, worker
 ### Stage Checkpoint Selection Rule
 
 Never initialize the next training stage from the final checkpoint by default. Select the upstream-stage checkpoint using its validation curve and record the selection metric. A final checkpoint is valid only when it is also the validation peak or when a deliberate last-checkpoint ablation is being run. Stage1@240 was monotonic, so step1500 was both final and best. Stage1@480 peaked at step500 and regressed afterward; using step1500 to initialize B3 introduced a checkpoint-selection confound that B3b explicitly tests.
+
+### Geometry Comparison And Noise-Control Order
+
+B3b initialized Stage2@480/240 from the Stage1@480 validation-peak step500 checkpoint and reached J&F 0.7545. This is +0.38 points over B3 initialized from the regressed Stage1 step1500 checkpoint, so peak selection helps in the expected direction but remains inside the preregistered 0.5-point noise branch. Treat checkpoint selection as a small confound, not as the explanation for the earlier B3-versus-Q1 ordering.
+
+Stage1 benefit is established across both tested geometries: B3b exceeds B2 by 1.55 points at train geometry 480/240, and Q1 exceeds Q2 by 2.05 points at train geometry 240/120. Geometry ranking is not established because B3b 0.7545 and Q1 0.7563 differ by only 0.18 points.
+
+B3b second-seed noise control is complete. The two B3b final step3000 results are 0.7545 and 0.7563, a difference of 0.18 points, with a two-seed mean of 0.7554. Q1 at 0.7563 lies inside this observed final-result range, so Q1 versus B3b cannot rank the tested geometries. Treat endpoint reproducibility and trajectory variability separately: the matched final-step difference is 0.18 points, while intermediate checkpoints differ by up to 0.98 points. The latter shows seed-sensitive convergence speed, not a measured +/-0.5-to-1.0-point final-result noise band. Both B3b runs load the same frozen Stage1 checkpoint, so this control measures Stage2 CReFF initialization and dataloader-order variability only.
+
+A1@480 is already complete at J&F 0.6486 and should not be rerun unless the evaluation protocol changes. B3c/H1 is optional and can only strengthen the geometry-robustness coverage; it is not expected to rank geometries. Prioritize an explicit A0/A1/B3b FPS benchmark. A B3b step3000-to-5000 extension is also optional, but model checkpoints do not contain optimizer state, so the extension resets AdamW and must be labeled as an optimizer-reset continuation rather than a strictly continuous convergence test.
+
+
+### Full-Val FPS Benchmark Result
+
+The four-way GPU-compute benchmark is complete on all 30 DAVIS-2017 val sequences / 1999 frames. CUDA-event timing covers `InferenceCore.step()` only with AMP and excludes disk IO, input resize, and mask saving.
+
+| Configuration | J&F | FPS | Peak memory MiB |
+|---|---:|---:|---:|
+| A0 HR480 every frame | 0.8630 | 62.85 | 1019.95 |
+| all-240 every frame | 0.8266 | 69.67 | 399.54 |
+| A1 HR480/LR240, no CReFF | 0.6486 | 64.40 | 1055.00 |
+| B3b HR480/LR240 + CReFF | 0.7554 | 60.38 | 1055.04 |
+
+All-240 Pareto-dominates the current B3b implementation: 1.154x faster, +7.12 J&F points, and 0.379x peak memory. B3b is also slower than A0 HR480. Stop treating FPS as an unverified method advantage. Before spending GPU on B3c or longer accuracy training, profile and redesign the compressed path so it can produce a measurable runtime benefit, or revise the method framing away from speed efficiency.
 
 ### CPU Threading Rule For Multi-Worker Loading
 

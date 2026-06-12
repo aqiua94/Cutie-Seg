@@ -94,6 +94,7 @@ def main():
     parser.add_argument('--gop-length', type=int, default=12)
     parser.add_argument('--lr-scale', type=float, default=0.5)
     parser.add_argument('--creff-k', type=int, default=7)
+    parser.add_argument('--lr-downstream', action='store_true')
     args = parser.parse_args()
 
     cfg = OmegaConf.load('cutie/config/eval_config.yaml')
@@ -105,6 +106,7 @@ def main():
     cfg.compressed_p_frames = args.compressed_p_frames or cfg.use_creff
     cfg.gop_length = args.gop_length
     cfg.lr_scale = args.lr_scale
+    cfg.lr_downstream = args.lr_downstream
     cfg.hr_pix_memory_keep = 2
     cfg.mem_every = 5
     cfg.stagger_updates = 5
